@@ -20,6 +20,12 @@
 		fileName = file.name;
 	}
 
+	function useSample() {
+		if (fileUrl && !fileUrl.startsWith('/')) URL.revokeObjectURL(fileUrl);
+		fileUrl = '/sample.pdf';
+		fileName = 'sample.pdf';
+	}
+
 	async function renderWithPdfJs(url: string, container: HTMLDivElement) {
 		pdfStatus = 'Loading...';
 		container.innerHTML = '';
@@ -28,10 +34,10 @@
 			for (let i = 1; i <= pdf.numPages; i++) {
 				const page = await pdf.getPage(i);
 
-				// Scale to fit the container width so it never overflows on tablet
+				// Fit to container on narrow screens, but never upscale beyond natural size on desktop
 				const containerWidth = container.clientWidth || window.innerWidth;
 				const baseViewport = page.getViewport({ scale: 1 });
-				const scale = containerWidth / baseViewport.width;
+				const scale = Math.min(containerWidth / baseViewport.width, 1);
 				const viewport = page.getViewport({ scale });
 
 				const canvas = document.createElement('canvas');
@@ -86,6 +92,17 @@
 			</span>
 			<input type="file" accept="application/pdf" class="hidden" onchange={handleFile} />
 		</label>
+		<div class="mt-2 flex items-center gap-2">
+			<div class="h-px flex-1 bg-gray-200"></div>
+			<span class="text-xs text-gray-400">or</span>
+			<div class="h-px flex-1 bg-gray-200"></div>
+		</div>
+		<button
+			class="mt-2 w-full rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-700 transition active:bg-gray-50"
+			onclick={useSample}
+		>
+			Use sample PDF
+		</button>
 	</div>
 
 	{#if fileUrl}
