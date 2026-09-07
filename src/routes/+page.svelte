@@ -44,7 +44,7 @@
 				canvas.width = viewport.width;
 				canvas.height = viewport.height;
 				canvas.style.display = 'block';
-				canvas.style.width = '100%';
+				canvas.style.maxWidth = '100%';
 				canvas.style.marginBottom = '12px';
 				canvas.style.borderRadius = '4px';
 				canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.12)';
@@ -153,7 +153,7 @@
 						>
 					{/if}
 				</p>
-				<div bind:this={canvasContainer} class="w-full overflow-hidden"></div>
+				<div bind:this={canvasContainer} class="flex w-full flex-col items-center overflow-hidden"></div>
 			</div>
 		{/if}
 	{:else}
