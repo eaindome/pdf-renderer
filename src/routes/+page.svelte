@@ -10,12 +10,17 @@
 	let fileUrl: string | null = $state(null);
 	let fileName = $state('');
 	let canvasContainer: HTMLDivElement | undefined = $state();
-	let pdfStatus = $state('');
+
+	let pdfDoc: pdfjsLib.PDFDocumentProxy | null = $state(null);
+	let zoomLevel = $state(1);
+	let pdfStatus = $state<'idle' | 'loading' | 'ready' | { error: string }>('idle');
+
+	let renderGeneration = 0;
 
 	function handleFile(e: Event) {
 		const file = (e.target as HTMLInputElement).files?.[0];
 		if (!file) return;
-		if (fileUrl) URL.revokeObjectURL(fileUrl);
+		if (fileUrl && !fileUrl.startsWith('/')) URL.revokeObjectURL(fileUrl);
 		fileUrl = URL.createObjectURL(file);
 		fileName = file.name;
 	}
@@ -26,40 +31,60 @@
 		fileName = 'sample.pdf';
 	}
 
-	async function renderWithPdfJs(url: string, container: HTMLDivElement) {
-		pdfStatus = 'Loading...';
-		container.innerHTML = '';
+	function zoom(delta: number) {
+		zoomLevel = Math.min(3, Math.max(0.5, Math.round((zoomLevel + delta) * 4) / 4));
+	}
+
+	async function loadPdf(url: string) {
+		pdfDoc = null;
+		zoomLevel = 1;
+		pdfStatus = 'loading';
 		try {
-			const pdf = await pdfjsLib.getDocument({ url }).promise;
-			for (let i = 1; i <= pdf.numPages; i++) {
-				const page = await pdf.getPage(i);
-
-				// Fit to container on narrow screens, but never upscale beyond natural size on desktop
-				const containerWidth = container.clientWidth || window.innerWidth;
-				const baseViewport = page.getViewport({ scale: 1 });
-				const scale = Math.min(containerWidth / baseViewport.width, 1);
-				const viewport = page.getViewport({ scale });
-
-				const canvas = document.createElement('canvas');
-				canvas.width = viewport.width;
-				canvas.height = viewport.height;
-				canvas.style.display = 'block';
-				canvas.style.maxWidth = '100%';
-				canvas.style.marginBottom = '12px';
-				canvas.style.borderRadius = '4px';
-				canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.12)';
-				container.appendChild(canvas);
-				await page.render({ canvas, viewport }).promise;
-			}
-			pdfStatus = `${pdf.numPages} page(s) rendered`;
+			pdfDoc = await pdfjsLib.getDocument({ url }).promise;
+			pdfStatus = 'ready';
 		} catch (err) {
-			pdfStatus = `Error: ${err instanceof Error ? err.message : String(err)}`;
+			pdfStatus = { error: err instanceof Error ? err.message : String(err) };
+		}
+	}
+
+	async function renderPages(
+		doc: pdfjsLib.PDFDocumentProxy,
+		container: HTMLDivElement,
+		zoom: number
+	) {
+		const generation = ++renderGeneration;
+		container.innerHTML = '';
+
+		for (let i = 1; i <= doc.numPages; i++) {
+			if (generation !== renderGeneration) return;
+			const page = await doc.getPage(i);
+			const containerWidth = container.clientWidth || window.innerWidth;
+			const baseViewport = page.getViewport({ scale: 1 });
+			const scale = Math.min(containerWidth / baseViewport.width, 1) * zoom;
+			const viewport = page.getViewport({ scale });
+
+			const canvas = document.createElement('canvas');
+			canvas.width = viewport.width;
+			canvas.height = viewport.height;
+			canvas.style.display = 'block';
+			canvas.style.maxWidth = '100%';
+			canvas.style.marginBottom = '12px';
+			canvas.style.borderRadius = '4px';
+			canvas.style.boxShadow = '0 1px 4px rgba(0,0,0,0.12)';
+			container.appendChild(canvas);
+			await page.render({ canvas, viewport }).promise;
 		}
 	}
 
 	$effect(() => {
-		if (activeTab === 'pdfjs' && fileUrl && canvasContainer) {
-			renderWithPdfJs(fileUrl, canvasContainer);
+		if (activeTab === 'pdfjs' && fileUrl) {
+			loadPdf(fileUrl);
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'pdfjs' && pdfDoc && canvasContainer) {
+			renderPages(pdfDoc, canvasContainer, zoomLevel);
 		}
 	});
 </script>
@@ -85,9 +110,7 @@
 					<p class="text-xs text-gray-400">Only .pdf files are accepted</p>
 				{/if}
 			</div>
-			<span
-				class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white active:bg-blue-700"
-			>
+			<span class="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white active:bg-blue-700">
 				{fileName ? 'Change' : 'Choose PDF'}
 			</span>
 			<input type="file" accept="application/pdf" class="hidden" onchange={handleFile} />
@@ -110,19 +133,13 @@
 		<div class="sticky top-0 z-10 border-b border-gray-200 bg-white shadow-sm">
 			<div class="flex">
 				<button
-					class="flex flex-1 items-center justify-center py-4 text-sm font-medium transition {activeTab ===
-					'native'
-						? 'border-b-2 border-blue-600 text-blue-600'
-						: 'text-gray-500'}"
+					class="flex flex-1 items-center justify-center py-4 text-sm font-medium transition {activeTab === 'native' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}"
 					onclick={() => (activeTab = 'native')}
 				>
 					Native (iframe)
 				</button>
 				<button
-					class="flex flex-1 items-center justify-center py-4 text-sm font-medium transition {activeTab ===
-					'pdfjs'
-						? 'border-b-2 border-blue-600 text-blue-600'
-						: 'text-gray-500'}"
+					class="flex flex-1 items-center justify-center py-4 text-sm font-medium transition {activeTab === 'pdfjs' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}"
 					onclick={() => (activeTab = 'pdfjs')}
 				>
 					PDF.js
@@ -133,9 +150,6 @@
 		<!-- Tab content -->
 		{#if activeTab === 'native'}
 			<div class="px-4 py-4 sm:px-6">
-				<p class="mb-3 text-xs text-gray-400">
-					Uses the browser's built-in PDF viewer via &lt;iframe&gt;
-				</p>
 				<iframe
 					src={fileUrl}
 					class="h-[80vh] w-full rounded-lg border border-gray-200"
@@ -143,16 +157,45 @@
 				></iframe>
 			</div>
 		{:else}
-			<div class="px-4 py-4 sm:px-6">
-				<p class="mb-4 text-xs text-gray-400">
-					Rendered page-by-page on &lt;canvas&gt; using PDF.js
-					{#if pdfStatus}
-						— <span
-							class="font-medium {pdfStatus.startsWith('Error') ? 'text-red-500' : 'text-gray-600'}"
-							>{pdfStatus}</span
-						>
+			<!-- PDF.js toolbar -->
+			<div class="sticky top-[57px] z-10 flex items-center justify-between border-b border-gray-100 bg-white px-4 py-2 sm:px-6">
+				<span class="text-sm text-gray-500">
+					{#if pdfStatus === 'loading'}
+						Loading...
+					{:else if pdfStatus === 'ready' && pdfDoc}
+						{pdfDoc.numPages} {pdfDoc.numPages === 1 ? 'page' : 'pages'}
+					{:else if typeof pdfStatus === 'object'}
+						<span class="text-red-500">Failed to load</span>
 					{/if}
-				</p>
+				</span>
+
+				{#if pdfStatus === 'ready'}
+					<div class="flex items-center gap-1">
+						<button
+							onclick={() => zoom(-0.25)}
+							disabled={zoomLevel <= 0.5}
+							class="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition active:bg-gray-100 disabled:opacity-30"
+						>
+							−
+						</button>
+						<span class="w-14 text-center text-sm tabular-nums text-gray-700">
+							{Math.round(zoomLevel * 100)}%
+						</span>
+						<button
+							onclick={() => zoom(0.25)}
+							disabled={zoomLevel >= 3}
+							class="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-gray-600 transition active:bg-gray-100 disabled:opacity-30"
+						>
+							+
+						</button>
+					</div>
+				{/if}
+			</div>
+
+			<div class="px-4 py-4 sm:px-6">
+				{#if typeof pdfStatus === 'object'}
+					<p class="text-sm text-red-500">{pdfStatus.error}</p>
+				{/if}
 				<div bind:this={canvasContainer} class="flex w-full flex-col items-center overflow-hidden"></div>
 			</div>
 		{/if}
